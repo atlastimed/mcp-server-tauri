@@ -9,7 +9,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 import WebSocket from 'ws';
 
 import { MCP_BRIDGE_TOKEN_HEADER } from '../../src/config.js';
-import { E2E_MCP_BRIDGE_TOKEN, getTestAppPort, isTestAppStarted } from '../test-utils.js';
+import { getE2EBridgeToken, getTestAppPort, isTestAppStarted } from '../test-utils.js';
 
 const TIMEOUT = 10000;
 
@@ -72,7 +72,7 @@ describe.skipIf(!isTestAppStarted())('plugin WebSocket security', () => {
    }, TIMEOUT);
 
    it('accepts the matching MCP_BRIDGE_TOKEN and can call get_backend_state', async () => {
-      const ws = await connect({ [MCP_BRIDGE_TOKEN_HEADER]: E2E_MCP_BRIDGE_TOKEN });
+      const ws = await connect({ [MCP_BRIDGE_TOKEN_HEADER]: getE2EBridgeToken() });
 
       sockets.push(ws);
 
