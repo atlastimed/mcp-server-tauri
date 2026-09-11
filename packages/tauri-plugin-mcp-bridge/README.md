@@ -85,7 +85,7 @@ fn main() {
 
 Equivalent environment variables (used when the builder does not set the value explicitly): `MCP_BRIDGE_BIND`, `MCP_BRIDGE_TOKEN`, `MCP_BRIDGE_ALLOW_INSECURE_CLEARTEXT=1`.
 
-`init()` and `Builder::build()` start the WebSocket listener only under `debug_assertions`. Release builds log once and do not bind. The explicit escape for a release binary bridge is:
+By default, `init()` and `Builder::build()` start the WebSocket listener only under `debug_assertions`. In a release binary the plugin still registers commands and injects the bridge script, but it does not bind the operator WebSocket unless you pass `Builder::allow_release(true)`:
 
 ```rust
 Builder::new().allow_release(true).build()
@@ -222,10 +222,7 @@ driver_session({ action: 'start', host: '192.168.1.100' })
 
 #### Connection Strategy
 
-The MCP server uses a fallback strategy:
-1. Try `localhost:{port}` first (most reliable for simulators/emulators/desktop)
-2. If localhost fails and a remote host is configured, try `{host}:{port}`
-3. Auto-discover apps on localhost if specific connection fails
+The MCP server connects to the specified or env host:port (loopback, `MCP_BRIDGE_HOST`, or an operator-specified host). It does **not** prefer localhost over a specified remote host. Auto-discovery on loopback requires `MCP_BRIDGE_TOKEN` and a successful handshake.
 
 ## Development
 

@@ -64,7 +64,7 @@ Once changes are approved and made:
 
 ## Notes
 
-- The plugin WebSocket listener starts only in debug builds (\`init()\` no-ops in release). Use \`Builder::new().allow_release(true)\` only if you intentionally need a release binary bridge
+- By default the plugin WebSocket listener starts only in debug builds. In release, \`init()\` still registers commands and injects the bridge script, but does not bind the operator WebSocket unless you pass \`Builder::new().allow_release(true)\`
 - The WebSocket server binds to \`127.0.0.1:9223\` by default and requires \`X-MCP-Bridge-Token\` (\`MCP_BRIDGE_TOKEN\`)
 - Generated tokens are logged once and written to the process temp dir as \`hypothesi-mcp-bridge.token\`
 - For LAN device testing, use \`Builder::new().bind_address("0.0.0.0").allow_insecure_cleartext(true).build()\` (or \`MCP_BRIDGE_BIND\` + \`MCP_BRIDGE_ALLOW_INSECURE_CLEARTEXT=1\`)`;
