@@ -12,6 +12,7 @@
    "scripts": {
       "build": "tsc && chmod +x dist/index.js",
       "test": "vitest run",
+      "test:unit": "vitest run --config vitest.config.unit.ts",
       "dev": "tsc --watch",
       "skills:validate": "node bin/intent.js list",
       "skills:stale": "node bin/intent.js list",

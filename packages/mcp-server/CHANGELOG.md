@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- Confine `webview_screenshot` `filePath` writes to `os.tmpdir()/tauri-mcp-screenshots` (or `TAURI_MCP_SCREENSHOT_DIR`). Absolute paths and `..` escapes outside that directory are rejected.
+- Mark `webview_screenshot` `readOnlyHint` as false because the tool can write files.
+
 ### Fixed
 - Require a token handshake before auto-discovery attaches to a plugin port; do not prefer localhost over a specified remote host; allowlist session targets to loopback, `MCP_BRIDGE_HOST`, and operator-specified hosts; send `X-MCP-Bridge-Token` from `MCP_BRIDGE_TOKEN`; normalize Windows path separators before CWD session routing.
 

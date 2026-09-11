@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `init()` does not bind the operator WebSocket in release builds unless `Builder::allow_release(true)`.
 - `mcp-bridge:default` is inspect-only; MCP automation requires `mcp-bridge:automation`.
 - IPC monitor event store is capped (ring buffer).
+- Confine `webview_screenshot` `filePath` and CLI `--file` image writes to `os.tmpdir()/tauri-mcp-screenshots` (or `TAURI_MCP_SCREENSHOT_DIR`). Absolute paths and `..` escapes outside that directory are rejected.
+- Mark `webview_screenshot` as not read-only because it can write files.
 
 ## [0.13.0] - 2026-08-28
 

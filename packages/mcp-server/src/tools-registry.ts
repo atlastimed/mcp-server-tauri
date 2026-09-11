@@ -276,7 +276,7 @@ export const TOOLS: ToolDefinition[] = [
       schema: ScreenshotSchema,
       annotations: {
          title: 'Screenshot Tauri Webview',
-         readOnlyHint: true,
+         readOnlyHint: false,
          openWorldHint: false,
       },
       handler: async (args) => {
