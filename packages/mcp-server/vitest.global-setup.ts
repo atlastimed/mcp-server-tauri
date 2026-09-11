@@ -26,12 +26,13 @@ async function startGlobalTestApp(): Promise<void> {
          stdio: 'pipe',
          shell: true,
          detached: process.platform !== 'win32',
-         // eslint-disable-next-line no-process-env
+         /* eslint-disable no-process-env -- child needs the real env */
          env: {
             ...process.env,
             WEBKIT_DISABLE_COMPOSITING_MODE: '1',
             MCP_BRIDGE_TOKEN: process.env.MCP_BRIDGE_TOKEN || E2E_MCP_BRIDGE_TOKEN,
          },
+         /* eslint-enable no-process-env */
       });
 
       if (!tauriProcess.stdout || !tauriProcess.stderr) {

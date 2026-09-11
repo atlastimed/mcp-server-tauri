@@ -1,5 +1,8 @@
 import { PLUGIN_VERSION_CARGO } from './version.js';
 
+// Prose destined for an agent: wrapping these lines would change the rendered
+// markdown, so line length is not meaningful here.
+/* eslint-disable @stylistic/max-len */
 export const SETUP_INSTRUCTIONS = `Help me set up or update the MCP Bridge plugin in my Tauri project.
 
 ## IMPORTANT: Do Not Act Without Permission
@@ -68,3 +71,4 @@ Once changes are approved and made:
 - The WebSocket server binds to \`127.0.0.1:9223\` by default and requires \`X-MCP-Bridge-Token\` (\`MCP_BRIDGE_TOKEN\`)
 - Generated tokens are logged once and written to the process temp dir as \`hypothesi-mcp-bridge.token\`
 - For LAN device testing, use \`Builder::new().bind_address("0.0.0.0").allow_insecure_cleartext(true).build()\` (or \`MCP_BRIDGE_BIND\` + \`MCP_BRIDGE_ALLOW_INSECURE_CLEARTEXT=1\`)`;
+/* eslint-enable @stylistic/max-len */

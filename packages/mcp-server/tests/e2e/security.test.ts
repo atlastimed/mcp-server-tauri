@@ -67,7 +67,8 @@ describe.skipIf(!isTestAppStarted())('plugin WebSocket security', () => {
 
    it('rejects a wrong token', async () => {
       await expect(connect({ [MCP_BRIDGE_TOKEN_HEADER]: 'wrong-token' }))
-         .rejects.toThrow(/handshake rejected|closed before handshake/i);
+         .rejects
+         .toThrow(/handshake rejected|closed before handshake/i);
    }, TIMEOUT);
 
    it('accepts the matching MCP_BRIDGE_TOKEN and can call get_backend_state', async () => {
