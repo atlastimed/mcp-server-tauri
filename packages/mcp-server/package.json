@@ -10,6 +10,10 @@
     ".": {
       "import": "./dist/api.js",
       "types": "./dist/api.d.ts"
+    },
+    "./screenshot-path": {
+      "import": "./dist/driver/screenshot-path.js",
+      "types": "./dist/driver/screenshot-path.d.ts"
     }
   },
   "bin": {

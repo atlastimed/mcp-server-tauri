@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- Confine `webview_screenshot` `filePath` writes to `os.tmpdir()/tauri-mcp-screenshots` (or `TAURI_MCP_SCREENSHOT_DIR`). Absolute paths and `..` escapes outside that directory are rejected.
+- Mark `webview_screenshot` `readOnlyHint` as false because the tool can write files.
+
 ## [0.13.0] - 2026-08-28
 
 ### Added
