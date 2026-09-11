@@ -85,6 +85,12 @@ fn main() {
 
 Equivalent environment variables (used when the builder does not set the value explicitly): `MCP_BRIDGE_BIND`, `MCP_BRIDGE_TOKEN`, `MCP_BRIDGE_ALLOW_INSECURE_CLEARTEXT=1`.
 
+`init()` and `Builder::build()` start the WebSocket listener only under `debug_assertions`. Release builds log once and do not bind. The explicit escape for a release binary bridge is:
+
+```rust
+Builder::new().allow_release(true).build()
+```
+
 ## Features
 
 ### 1. IPC Monitoring
@@ -263,17 +269,21 @@ npm test
 
 ## Permissions
 
-Add the plugin's default permission to your Tauri capabilities file (`src-tauri/capabilities/default.json`):
+Webview `invoke` is gated by Tauri capabilities, separately from the token-gated operator WebSocket.
+
+`mcp-bridge:default` is **inspect-only**: window info, backend state, and `script_result`. It does **not** allow `execute_js`, screenshots, script injection, or starting the IPC monitor. XSS in a window that only has `default` cannot native-eval through plugin commands.
+
+For the documented MCP automation path (including test-app e2e), grant `mcp-bridge:automation` — the former allow-all set:
 
 ```json
 {
   "permissions": [
-    "mcp-bridge:default"
+    "mcp-bridge:automation"
   ]
 }
 ```
 
-This grants all permissions required by the MCP server for **webview IPC** (`invoke`). The MCP operator plane is the token-gated WebSocket, not these capabilities: omitting `allow-execute-js` from a window does not stop `execute_js` over an authenticated plugin socket. The plugin is designed to work as a complete unit—partial permissions are not recommended as the MCP server expects all commands to be available.
+The MCP operator plane is still the token-gated WebSocket, not these capabilities: omitting `allow-execute-js` from a window does not stop `execute_js` over an authenticated plugin socket. Commands such as `script_result` and `request_script_injection` are invoked from the injected bridge script, so automation webviews need the matching ACL.
 
 ## API Documentation
 

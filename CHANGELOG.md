@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 - Plugin WebSocket requires `X-MCP-Bridge-Token`, defaults to loopback, and refuses silent LAN cleartext binds. URL scripts are https-only.
+- `init()` does not bind the operator WebSocket in release builds unless `Builder::allow_release(true)`.
+- `mcp-bridge:default` is inspect-only; MCP automation requires `mcp-bridge:automation`.
+- IPC monitor event store is capped (ring buffer).
 
 ## [0.13.0] - 2026-08-28
 

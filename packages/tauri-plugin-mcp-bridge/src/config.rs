@@ -32,6 +32,11 @@ pub struct Config {
     /// Allow cleartext `ws://` on a non-loopback bind (LAN device testing).
     pub allow_insecure_cleartext: bool,
     allow_insecure_explicit: bool,
+    /// Allow the operator WebSocket to bind in release builds.
+    ///
+    /// Debug builds always bind. Release builds log once and do not bind
+    /// unless this is true ([`Builder::allow_release`]).
+    pub allow_release: bool,
 }
 
 impl Default for Config {
@@ -43,6 +48,7 @@ impl Default for Config {
             token: None,
             allow_insecure_cleartext: false,
             allow_insecure_explicit: false,
+            allow_release: false,
         }
     }
 }
@@ -75,6 +81,7 @@ impl Config {
             token: None,
             allow_insecure_cleartext: false,
             allow_insecure_explicit: false,
+            allow_release: false,
         }
     }
 
@@ -87,6 +94,7 @@ impl Config {
             token: None,
             allow_insecure_cleartext: false,
             allow_insecure_explicit: false,
+            allow_release: false,
         }
     }
 
@@ -132,6 +140,15 @@ impl Config {
     }
 }
 
+/// Whether the operator WebSocket should bind.
+///
+/// `init()` / [`Builder::build`] pass `cfg!(debug_assertions)` and
+/// [`Config::allow_release`]. Release binaries no-op unless
+/// [`Builder::allow_release`] is set.
+pub fn should_bind_websocket(debug_assertions: bool, allow_release: bool) -> bool {
+    debug_assertions || allow_release
+}
+
 /// Builder for creating a configured MCP Bridge plugin.
 ///
 /// # Examples
@@ -139,8 +156,12 @@ impl Config {
 /// ```rust,ignore
 /// use tauri_plugin_mcp_bridge::Builder;
 ///
-/// // Default: binds to 127.0.0.1 (loopback) and requires X-MCP-Bridge-Token
+/// // Default: binds to 127.0.0.1 (loopback) in debug builds; requires X-MCP-Bridge-Token
 /// let plugin: tauri::plugin::TauriPlugin<tauri::Wry> = Builder::new().build();
+///
+/// // Release binary bridge (explicit opt-in):
+/// let plugin: tauri::plugin::TauriPlugin<tauri::Wry> =
+///     Builder::new().allow_release(true).build();
 ///
 /// // LAN device testing (cleartext, explicit opt-in):
 /// let plugin: tauri::plugin::TauriPlugin<tauri::Wry> = Builder::new()
@@ -226,6 +247,15 @@ impl Builder {
         self
     }
 
+    /// Allows the operator WebSocket listener in release builds.
+    ///
+    /// Without this, [`crate::init`] and [`Self::build`] log once and do not
+    /// bind in release (`debug_assertions` off). Debug builds always bind.
+    pub fn allow_release(mut self, allow: bool) -> Self {
+        self.config.allow_release = allow;
+        self
+    }
+
     /// Builds the plugin with the configured options.
     pub fn build<R: tauri::Runtime>(self) -> tauri::plugin::TauriPlugin<R> {
         crate::init_with_config(self.config)
@@ -270,5 +300,29 @@ mod tests {
         assert!(config.effective_allow_insecure_cleartext());
         let denied = Builder::new().allow_insecure_cleartext(false).config;
         assert!(!denied.effective_allow_insecure_cleartext());
+    }
+
+    #[test]
+    fn websocket_bind_is_debug_or_allow_release() {
+        assert!(should_bind_websocket(true, false));
+        assert!(should_bind_websocket(true, true));
+        assert!(!should_bind_websocket(false, false));
+        assert!(should_bind_websocket(false, true));
+    }
+
+    #[test]
+    fn init_defaults_do_not_allow_release() {
+        assert!(!Config::default().allow_release);
+        assert!(!Builder::new().config.allow_release);
+        assert!(Builder::new().allow_release(true).config.allow_release);
+        assert!(!Builder::new().allow_release(false).config.allow_release);
+    }
+
+    #[test]
+    fn cargo_test_profile_honors_debug_assertions() {
+        assert_eq!(
+            should_bind_websocket(cfg!(debug_assertions), false),
+            cfg!(debug_assertions)
+        );
     }
 }

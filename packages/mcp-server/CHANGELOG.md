@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Document loopback-default plugin bind, `MCP_BRIDGE_TOKEN`, and the explicit LAN cleartext opt-in (`allow_insecure_cleartext` / `MCP_BRIDGE_ALLOW_INSECURE_CLEARTEXT`).
+- Setup instructions now require `mcp-bridge:automation` (inspect-only `mcp-bridge:default` is not enough for MCP automation) and document `Builder::allow_release(true)` for a release binary bridge.
 
 ## [0.13.0] - 2026-08-28
 
