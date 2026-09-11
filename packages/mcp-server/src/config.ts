@@ -11,6 +11,14 @@ export interface BridgeConfig {
 }
 
 /**
+ * HTTP header the MCP client sends on WebSocket upgrade.
+ *
+ * WP-4's plugin server will require this; browsers do not attach it
+ * automatically, which is the CSWSH control.
+ */
+export const MCP_BRIDGE_TOKEN_HEADER = 'X-MCP-Bridge-Token';
+
+/**
  * Gets the default host for MCP Bridge connections.
  *
  * Resolution priority:
@@ -72,6 +80,104 @@ export function getConfig(): BridgeConfig {
       host: getDefaultHost(),
       port: getDefaultPort(),
    };
+}
+
+/**
+ * Shared secret for plugin WebSocket upgrade, if the operator configured one.
+ *
+ * Empty or unset means the client will not send `X-MCP-Bridge-Token`. Auto-discovery
+ * must not treat an unauthenticated peer as the session target in that case.
+ */
+export function getBridgeToken(): string | null {
+   // eslint-disable-next-line no-process-env
+   const token = process.env.MCP_BRIDGE_TOKEN;
+
+   if (token && token.length > 0) {
+      return token;
+   }
+
+   return null;
+}
+
+/**
+ * Headers to attach to the plugin WebSocket upgrade.
+ *
+ * @returns `undefined` when no token is configured so the client omits the header.
+ */
+export function getWebSocketClientHeaders(): Record<string, string> | undefined {
+   const token = getBridgeToken();
+
+   if (!token) {
+      return undefined;
+   }
+
+   return { [MCP_BRIDGE_TOKEN_HEADER]: token };
+}
+
+/**
+ * Canonical host comparison form: trimmed, lowercased, IPv6 brackets and
+ * IPv4-mapped prefixes stripped.
+ */
+export function canonicalizeHost(host: string): string {
+   let normalized = host.trim().toLowerCase();
+
+   if (normalized.startsWith('[') && normalized.endsWith(']')) {
+      normalized = normalized.slice(1, -1);
+   }
+
+   if (normalized.startsWith('::ffff:')) {
+      normalized = normalized.slice(7);
+   }
+
+   return normalized;
+}
+
+/**
+ * True for localhost / loopback IPv4 (127.0.0.0/8) / IPv6 ::1.
+ */
+export function isLoopbackHost(host: string): boolean {
+   const normalized = canonicalizeHost(host);
+
+   if (normalized === 'localhost' || normalized === '::1' || normalized === '0:0:0:0:0:0:0:1') {
+      return true;
+   }
+
+   const octets = normalized.split('.');
+
+   if (octets.length !== 4 || octets[0] !== '127') {
+      return false;
+   }
+
+   return octets.every((octet) => {
+      if (!/^\d{1,3}$/.test(octet)) {
+         return false;
+      }
+
+      const value = Number(octet);
+
+      return value >= 0 && value <= 255;
+   });
+}
+
+/**
+ * Hosts the MCP client may treat as a plugin endpoint.
+ *
+ * Allowlist is loopback, `MCP_BRIDGE_HOST`, `TAURI_DEV_HOST`, and an
+ * operator-supplied host (tool argument). Arbitrary destinations are
+ * rejected even if they speak WebSocket.
+ */
+export function isAllowedBridgeHost(host: string, extraAllowedHost?: string): boolean {
+   if (isLoopbackHost(host)) {
+      return true;
+   }
+
+   const canonical = canonicalizeHost(host),
+         // eslint-disable-next-line no-process-env
+         candidates = [ process.env.MCP_BRIDGE_HOST, process.env.TAURI_DEV_HOST, extraAllowedHost ];
+
+   return candidates.some((candidate) => {
+      return typeof candidate === 'string' && candidate.length > 0 && canonicalizeHost(candidate) === canonical;
+   });
 }
 
 /**

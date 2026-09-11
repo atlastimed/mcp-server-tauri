@@ -1,6 +1,18 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
-import { getCwdHint, getDefaultHost, getDefaultPort, getConfig, buildWebSocketURL } from '../../src/config.js';
+import {
+   buildWebSocketURL,
+   canonicalizeHost,
+   getBridgeToken,
+   getCwdHint,
+   getConfig,
+   getDefaultHost,
+   getDefaultPort,
+   getWebSocketClientHeaders,
+   isAllowedBridgeHost,
+   isLoopbackHost,
+   MCP_BRIDGE_TOKEN_HEADER,
+} from '../../src/config.js';
 
 describe('config', () => {
    const originalEnv = process.env;
@@ -12,6 +24,7 @@ describe('config', () => {
       delete process.env.MCP_BRIDGE_HOST;
       delete process.env.MCP_BRIDGE_PORT;
       delete process.env.MCP_BRIDGE_CWD;
+      delete process.env.MCP_BRIDGE_TOKEN;
       delete process.env.TAURI_DEV_HOST;
    });
 
@@ -111,6 +124,70 @@ describe('config', () => {
          process.env.MCP_BRIDGE_CWD = '';
 
          expect(getCwdHint()).toBe(process.cwd());
+      });
+   });
+
+   describe('getBridgeToken', () => {
+      it('returns null by default', () => {
+         expect(getBridgeToken()).toBeNull();
+         expect(getWebSocketClientHeaders()).toBeUndefined();
+      });
+
+      it('returns MCP_BRIDGE_TOKEN and the upgrade header when set', () => {
+         process.env.MCP_BRIDGE_TOKEN = 'secret-token';
+
+         expect(getBridgeToken()).toBe('secret-token');
+         expect(MCP_BRIDGE_TOKEN_HEADER).toBe('X-MCP-Bridge-Token');
+         expect(getWebSocketClientHeaders()).toEqual({
+            [MCP_BRIDGE_TOKEN_HEADER]: 'secret-token',
+         });
+      });
+
+      it('ignores an empty MCP_BRIDGE_TOKEN', () => {
+         process.env.MCP_BRIDGE_TOKEN = '';
+
+         expect(getBridgeToken()).toBeNull();
+      });
+   });
+
+   describe('isLoopbackHost / isAllowedBridgeHost', () => {
+      it('treats localhost and loopback addresses as loopback', () => {
+         expect(isLoopbackHost('localhost')).toBe(true);
+         expect(isLoopbackHost('127.0.0.1')).toBe(true);
+         expect(isLoopbackHost('127.0.0.2')).toBe(true);
+         expect(isLoopbackHost('::1')).toBe(true);
+         expect(isLoopbackHost('[::1]')).toBe(true);
+         expect(isLoopbackHost('::ffff:127.0.0.1')).toBe(true);
+      });
+
+      it('does not treat LAN or public hosts as loopback', () => {
+         expect(isLoopbackHost('192.168.1.9')).toBe(false);
+         expect(isLoopbackHost('10.0.0.5')).toBe(false);
+         expect(isLoopbackHost('203.0.113.5')).toBe(false);
+         expect(canonicalizeHost('192.168.1.9')).toBe('192.168.1.9');
+      });
+
+      it('allowlists loopback even without env configuration', () => {
+         expect(isAllowedBridgeHost('127.0.0.1')).toBe(true);
+         expect(isAllowedBridgeHost('localhost')).toBe(true);
+      });
+
+      it('allowlists MCP_BRIDGE_HOST and TAURI_DEV_HOST', () => {
+         process.env.MCP_BRIDGE_HOST = '192.168.1.9';
+
+         expect(isAllowedBridgeHost('192.168.1.9')).toBe(true);
+         expect(isAllowedBridgeHost('10.0.0.5')).toBe(false);
+
+         delete process.env.MCP_BRIDGE_HOST;
+         process.env.TAURI_DEV_HOST = '10.0.0.5';
+
+         expect(isAllowedBridgeHost('10.0.0.5')).toBe(true);
+      });
+
+      it('allowlists an explicitly passed operator host and rejects arbitrary peers', () => {
+         expect(isAllowedBridgeHost('203.0.113.5')).toBe(false);
+         expect(isAllowedBridgeHost('203.0.113.5', '203.0.113.5')).toBe(true);
+         expect(isAllowedBridgeHost('203.0.113.5', '192.168.1.9')).toBe(false);
       });
    });
 });
