@@ -38,7 +38,7 @@ export async function createStubBridge(options: {
                   data: {
                      app: { name: 'Stub App', identifier: 'com.stub' },
                      cwd: '/stub',
-                     bridge: { pluginVersion: '0.13.0' },
+                     bridge: { pluginVersion: '0.14.0' },
                   },
                }));
             }
