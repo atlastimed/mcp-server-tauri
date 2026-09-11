@@ -13,7 +13,7 @@ export interface BridgeConfig {
 /**
  * HTTP header the MCP client sends on WebSocket upgrade.
  *
- * WP-4's plugin server will require this; browsers do not attach it
+ * The plugin server requires this; browsers do not attach it
  * automatically, which is the CSWSH control.
  */
 export const MCP_BRIDGE_TOKEN_HEADER = 'X-MCP-Bridge-Token';

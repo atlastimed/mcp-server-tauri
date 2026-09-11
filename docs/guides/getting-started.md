@@ -74,8 +74,9 @@ Once changes are approved and made:
 ## Notes
 
 - The plugin only runs in debug builds so it won't affect production
-- The WebSocket server binds to \`0.0.0.0:9223\` by default
-- For localhost-only access, use \`Builder::new().bind_address("127.0.0.1").build()\``;
+- The WebSocket server binds to \`127.0.0.1:9223\` by default and requires \`X-MCP-Bridge-Token\` (\`MCP_BRIDGE_TOKEN\`)
+- Generated tokens are logged once and written to the process temp dir as \`hypothesi-mcp-bridge.token\`
+- For LAN device testing, use \`Builder::new().bind_address("0.0.0.0").allow_insecure_cleartext(true).build()\` (or \`MCP_BRIDGE_BIND\` + \`MCP_BRIDGE_ALLOW_INSECURE_CLEARTEXT=1\`)`;
 </script>
 
 # Getting Started with MCP Server Tauri

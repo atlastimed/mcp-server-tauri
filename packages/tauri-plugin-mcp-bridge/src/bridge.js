@@ -614,7 +614,13 @@
          script.setAttribute('data-mcp-script-id', entry.id);
 
          if (entry.type === 'url') {
-            script.src = entry.content;
+            var url = String(entry.content || '').trim();
+            // Defense in depth: Rust already rejects non-https (SEC-004).
+            if (!/^https:\/\//i.test(url)) {
+               bridgeLogger.error('Rejected non-https URL script:', entry.id);
+               return;
+            }
+            script.src = url;
             script.async = true;
             script.onload = function() {
                bridgeLogger.info('URL script loaded:', entry.id);

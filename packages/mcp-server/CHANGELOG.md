@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Require a token handshake before auto-discovery attaches to a plugin port; do not prefer localhost over a specified remote host; allowlist session targets to loopback, `MCP_BRIDGE_HOST`, and operator-specified hosts; send `X-MCP-Bridge-Token` from `MCP_BRIDGE_TOKEN`; normalize Windows path separators before CWD session routing.
 
+### Changed
+- Document loopback-default plugin bind, `MCP_BRIDGE_TOKEN`, and the explicit LAN cleartext opt-in (`allow_insecure_cleartext` / `MCP_BRIDGE_ALLOW_INSECURE_CLEARTEXT`).
+
 ## [0.13.0] - 2026-08-28
 
 ### Added

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- Require `X-MCP-Bridge-Token` on WebSocket upgrade; missing or wrong tokens are rejected before command dispatch.
+- Default bind address is `127.0.0.1`. Binding `0.0.0.0` (or any non-loopback address) requires `Builder::allow_insecure_cleartext(true)` or `MCP_BRIDGE_ALLOW_INSECURE_CLEARTEXT`.
+- `register_script` `type=url` accepts `https://` only (`javascript:`, `data:`, `file:`, and `http:` are rejected).
+- Unauthenticated sockets never subscribe to picker/event broadcasts; picker events go to the latest authed operator connection.
+
 ## [0.13.0] - 2026-08-28
 
 ### Added

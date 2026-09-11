@@ -11,5 +11,8 @@ export default defineConfig({
       fileParallelism: false, // Disable file-level parallelism
       pool: 'forks', // Use separate processes for isolation
       globalSetup: './vitest.global-setup.ts', // Start app once globally
+      env: {
+         MCP_BRIDGE_TOKEN: process.env.MCP_BRIDGE_TOKEN || 'wp4-e2e-test-token',
+      },
    },
 });

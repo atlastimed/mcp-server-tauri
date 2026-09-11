@@ -58,6 +58,13 @@
 //! console.log(info); // { width, height, x, y, title, focused, visible }
 //! ```
 //!
+//! ## Operator WebSocket vs webview capabilities
+//!
+//! MCP talks to the plugin over a token-gated WebSocket (`X-MCP-Bridge-Token`),
+//! not through Tauri webview `invoke`. Host-app capability ACL (for example
+//! omitting `allow-execute-js`) does **not** apply to that operator plane; the
+//! handshake token is the authorization control.
+//!
 //! ## Permissions
 //!
 //! The plugin's default permission set enables all commands. Individual permissions
@@ -78,6 +85,7 @@
 //! - `allow-start-ipc-monitor` / `deny-start-ipc-monitor`
 //! - `allow-stop-ipc-monitor` / `deny-stop-ipc-monitor`
 
+pub mod auth;
 pub mod commands;
 pub mod config;
 pub mod discovery;
@@ -88,6 +96,7 @@ pub mod script_registry;
 pub mod utils;
 pub mod websocket;
 
+pub use auth::TOKEN_HEADER;
 pub use config::{Builder, Config};
 
 use commands::ScriptExecutor;
@@ -155,8 +164,10 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
 ///     .expect("error while running tauri application");
 /// ```
 pub fn init_with_config<R: Runtime>(config: Config) -> TauriPlugin<R> {
-    let bind_address = config.bind_address.clone();
+    let bind_address = config.effective_bind_address();
     let base_port = config.base_port;
+    let allow_insecure_cleartext = config.effective_allow_insecure_cleartext();
+    let resolved_token = config.resolve_token();
 
     PluginBuilder::<R>::new("mcp-bridge")
         .invoke_handler(tauri::generate_handler![
@@ -176,6 +187,13 @@ pub fn init_with_config<R: Runtime>(config: Config) -> TauriPlugin<R> {
         ])
         .js_init_script(include_str!("bridge.js").to_string())
         .setup(move |app, _api| {
+            if let Err(error) =
+                crate::auth::validate_bind_policy(&bind_address, allow_insecure_cleartext)
+            {
+                mcp_log_error("PLUGIN", &error);
+                return Err(error.into());
+            }
+
             // Initialize script executor state
             app.manage(ScriptExecutor::new());
 
@@ -199,6 +217,28 @@ pub fn init_with_config<R: Runtime>(config: Config) -> TauriPlugin<R> {
 
             let identifier = app.config().identifier.clone();
 
+            let token = resolved_token.secret.clone();
+            if resolved_token.generated {
+                mcp_log_info(
+                    "PLUGIN",
+                    &format!(
+                        "Generated MCP Bridge token (logged once): {token}. Pin with MCP_BRIDGE_TOKEN."
+                    ),
+                );
+            } else {
+                mcp_log_info("PLUGIN", "Using configured MCP_BRIDGE_TOKEN for WebSocket handshake");
+            }
+            match crate::auth::persist_token(&token) {
+                Ok(path) => mcp_log_info(
+                    "PLUGIN",
+                    &format!("MCP Bridge token file: {}", path.display()),
+                ),
+                Err(error) => mcp_log_error(
+                    "PLUGIN",
+                    &format!("Failed to write MCP Bridge token file: {error}"),
+                ),
+            }
+
             // Create broadcast channel externally so it can be shared with
             // the element picker event forwarder
             let (event_tx, _event_rx) = broadcast::channel::<String>(100);
@@ -208,8 +248,13 @@ pub fn init_with_config<R: Runtime>(config: Config) -> TauriPlugin<R> {
 
             // Start WebSocket server in background
             let app_handle = app.clone();
-            let ws_server =
-                websocket::WebSocketServer::new(port, &bind_address, app_handle, event_tx);
+            let ws_server = websocket::WebSocketServer::new(
+                port,
+                &bind_address,
+                app_handle,
+                event_tx,
+                token,
+            );
 
             tauri::async_runtime::spawn(async move {
                 if let Err(e) = ws_server.start().await {

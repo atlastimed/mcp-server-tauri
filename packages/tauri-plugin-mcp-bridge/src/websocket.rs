@@ -4,16 +4,22 @@
 //! between the Tauri application and external MCP clients. It broadcasts events
 //! to all connected clients and can receive commands from them.
 
+use crate::auth::TokenCallback;
 use crate::commands::{self, resolve_window_with_context, ScriptExecutor, WindowContext};
 use crate::logging::{mcp_log_error, mcp_log_info};
-use crate::script_registry::{ScriptEntry, ScriptType, SharedScriptRegistry};
+use crate::script_registry::{
+    validate_https_script_url, ScriptEntry, ScriptType, SharedScriptRegistry,
+};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{self, Value};
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use tauri::{AppHandle, Manager, Runtime, WebviewWindow};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{broadcast, mpsc};
-use tokio_tungstenite::{accept_async, tungstenite::Message};
+use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::{accept_hdr_async, WebSocketStream};
 
 /// WebSocket server for real-time event streaming to MCP clients.
 ///
@@ -23,10 +29,11 @@ use tokio_tungstenite::{accept_async, tungstenite::Message};
 ///
 /// # Architecture
 ///
-/// - Binds to 0.0.0.0 by default (all interfaces) for remote device support
+/// - Binds to 127.0.0.1 by default (loopback); 0.0.0.0 is an explicit opt-in
+/// - Requires `X-MCP-Bridge-Token` on upgrade; unauthenticated sockets never join
 /// - Runs on port 9223 by default (or next available in range 9223-9322)
 /// - Supports multiple concurrent client connections
-/// - Uses broadcast channels for event distribution
+/// - Uses broadcast channels for event distribution (latest authed operator)
 /// - Handles client disconnections gracefully
 ///
 /// # Examples
@@ -38,7 +45,7 @@ use tokio_tungstenite::{accept_async, tungstenite::Message};
 /// async fn main() {
 ///     // Requires a Tauri AppHandle
 ///     let (event_tx, _event_rx) = tokio::sync::broadcast::channel(100);
-///     let server = WebSocketServer::new(9223, "0.0.0.0", app_handle, event_tx);
+///     let server = WebSocketServer::new(9223, "127.0.0.1", app_handle, event_tx, token);
 ///
 ///     tokio::spawn(async move {
 ///         if let Err(e) = server.start().await {
@@ -51,6 +58,8 @@ pub struct WebSocketServer<R: Runtime> {
     addr: SocketAddr,
     event_tx: broadcast::Sender<String>,
     app: AppHandle<R>,
+    token: String,
+    operator_generation: Arc<AtomicU64>,
 }
 
 impl<R: Runtime> WebSocketServer<R> {
@@ -62,6 +71,7 @@ impl<R: Runtime> WebSocketServer<R> {
     /// * `bind_address` - The address to bind to (e.g., "0.0.0.0" or "127.0.0.1")
     /// * `app` - The Tauri application handle
     /// * `event_tx` - An external broadcast sender for distributing events
+    /// * `token` - Handshake secret required as `X-MCP-Bridge-Token`
     ///
     /// # Returns
     ///
@@ -73,13 +83,14 @@ impl<R: Runtime> WebSocketServer<R> {
     /// use tauri_plugin_mcp_bridge::websocket::WebSocketServer;
     ///
     /// let (event_tx, _event_rx) = tokio::sync::broadcast::channel(100);
-    /// let server = WebSocketServer::new(9223, "0.0.0.0", app_handle, event_tx);
+    /// let server = WebSocketServer::new(9223, "127.0.0.1", app_handle, event_tx, token);
     /// ```
     pub fn new(
         port: u16,
         bind_address: &str,
         app: AppHandle<R>,
         event_tx: broadcast::Sender<String>,
+        token: String,
     ) -> Self {
         let addr: SocketAddr = format!("{bind_address}:{port}").parse().unwrap();
 
@@ -87,6 +98,8 @@ impl<R: Runtime> WebSocketServer<R> {
             addr,
             event_tx,
             app,
+            token,
+            operator_generation: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -109,7 +122,7 @@ impl<R: Runtime> WebSocketServer<R> {
     /// #[tokio::main]
     /// async fn main() {
     ///     // Requires a Tauri AppHandle
-    ///     let (server, _rx) = WebSocketServer::new(9223, "0.0.0.0", app_handle);
+    ///     let (server, _rx) = WebSocketServer::new(9223, "127.0.0.1", app_handle, token);
     ///
     ///     tokio::spawn(async move {
     ///         if let Err(e) = server.start().await {
@@ -129,9 +142,13 @@ impl<R: Runtime> WebSocketServer<R> {
             let (stream, _) = listener.accept().await?;
             let event_tx = self.event_tx.clone();
             let app = self.app.clone();
+            let token = self.token.clone();
+            let operator_generation = self.operator_generation.clone();
 
             tokio::spawn(async move {
-                if let Err(e) = handle_connection(stream, event_tx, app).await {
+                if let Err(e) =
+                    handle_connection(stream, event_tx, app, token, operator_generation).await
+                {
                     mcp_log_error("WS_SERVER", &format!("WebSocket connection error: {e}"));
                 }
             });
@@ -439,7 +456,12 @@ fn handle_register_script<R: Runtime>(app: &AppHandle<R>, id: &str, args: &Value
     };
 
     let script_type = match type_str {
-        "url" => ScriptType::Url,
+        "url" => {
+            if let Err(error) = validate_https_script_url(content_str) {
+                return error_response(id, error);
+            }
+            ScriptType::Url
+        }
         _ => ScriptType::Inline,
     };
 
@@ -652,12 +674,29 @@ fn is_benign_handshake_error(err: &tokio_tungstenite::tungstenite::Error) -> boo
     match err {
         Error::ConnectionClosed | Error::AlreadyClosed => true,
         Error::Protocol(ProtocolError::HandshakeIncomplete) => true,
+        Error::Http(_) => true,
         Error::Io(io_err) => matches!(
             io_err.kind(),
             ErrorKind::ConnectionReset | ErrorKind::UnexpectedEof | ErrorKind::BrokenPipe
         ),
         _ => false,
     }
+}
+
+/// Upgrade only after a matching `X-MCP-Bridge-Token` header (SEC-001, SEC-010).
+async fn accept_authenticated(
+    stream: TcpStream,
+    token: &str,
+) -> Result<WebSocketStream<TcpStream>, tokio_tungstenite::tungstenite::Error> {
+    accept_hdr_async(stream, TokenCallback::new(token)).await
+}
+
+fn claim_operator(operator_generation: &AtomicU64) -> u64 {
+    operator_generation.fetch_add(1, Ordering::SeqCst) + 1
+}
+
+fn is_current_operator(operator_generation: &AtomicU64, generation: u64) -> bool {
+    operator_generation.load(Ordering::SeqCst) == generation
 }
 
 /// Handles a single WebSocket client connection.
@@ -681,18 +720,20 @@ async fn handle_connection<R: Runtime>(
     stream: TcpStream,
     event_tx: broadcast::Sender<String>,
     app: AppHandle<R>,
+    token: String,
+    operator_generation: Arc<AtomicU64>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let ws_stream = match accept_async(stream).await {
+    let ws_stream = match accept_authenticated(stream, &token).await {
         Ok(ws_stream) => ws_stream,
-        // A client that opens the TCP connection but drops before completing the WebSocket
-        // upgrade (port probes, health checks, browsers/agents reconnecting) surfaces here as a
-        // benign handshake/connection error, e.g. "Handshake not finished". Swallow those so
-        // they don't spam the connection-error log; propagate anything genuinely unexpected.
+        // Rejected tokens, probes, and incomplete upgrades must not join event_tx
+        // or dispatch execute_js (SEC-001, SEC-013).
         Err(e) if is_benign_handshake_error(&e) => return Ok(()),
         Err(e) => return Err(e.into()),
     };
     let (mut ws_sender, mut ws_receiver) = ws_stream.split();
+    // Subscribe only after auth. Picker events go to the latest authed operator.
     let mut event_rx = event_tx.subscribe();
+    let my_generation = claim_operator(&operator_generation);
 
     let (response_tx, mut response_rx) = mpsc::unbounded_channel::<String>();
 
@@ -700,6 +741,9 @@ async fn handle_connection<R: Runtime>(
         loop {
             tokio::select! {
                 Ok(msg) = event_rx.recv() => {
+                    if !is_current_operator(&operator_generation, my_generation) {
+                        continue;
+                    }
                     if let Err(e) = ws_sender.send(Message::Text(msg.into())).await {
                         eprintln!("Failed to send broadcast: {e}");
                         break;
@@ -900,7 +944,14 @@ pub fn inject_all_scripts<R: Runtime>(
     let registry: tauri::State<'_, SharedScriptRegistry> = app.state();
     let scripts: Vec<ScriptEntry> = {
         let reg = registry.lock().unwrap();
-        reg.get_all().iter().map(|e| (*e).clone()).collect()
+        reg.get_all()
+            .iter()
+            .filter(|entry| match entry.script_type {
+                ScriptType::Inline => true,
+                ScriptType::Url => validate_https_script_url(&entry.content).is_ok(),
+            })
+            .map(|e| (*e).clone())
+            .collect()
     };
 
     let resolved = resolve_window_with_context(app, window_label)?;
@@ -1051,5 +1102,247 @@ mod tests {
 
         assert_payload_stays_in_json(&build_inject_script(&inline), CONCAT_PAYLOAD);
         assert_payload_stays_in_json(&build_inject_script(&url), COMMENT_PAYLOAD);
+    }
+}
+
+#[cfg(test)]
+mod control_plane_tests {
+    use super::{
+        accept_authenticated, claim_operator, is_current_operator, validate_https_script_url,
+    };
+    use crate::auth::TOKEN_HEADER;
+    use futures_util::{SinkExt, StreamExt};
+    use std::sync::atomic::AtomicU64;
+    use std::sync::Arc;
+    use std::time::Duration;
+    use tokio::net::TcpListener;
+    use tokio::sync::{broadcast, mpsc};
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    use tokio_tungstenite::tungstenite::Message;
+    use tokio_tungstenite::{connect_async, tungstenite};
+
+    const TOKEN: &str = "secret-token";
+
+    async fn start_control_plane() -> (u16, broadcast::Sender<String>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let (event_tx, _event_rx) = broadcast::channel::<String>(16);
+        let operator_generation = Arc::new(AtomicU64::new(0));
+        let server_tx = event_tx.clone();
+
+        tokio::spawn(async move {
+            loop {
+                let Ok((stream, _)) = listener.accept().await else {
+                    break;
+                };
+                let event_tx = server_tx.clone();
+                let operator_generation = operator_generation.clone();
+                tokio::spawn(async move {
+                    let Ok(ws) = accept_authenticated(stream, TOKEN).await else {
+                        return;
+                    };
+                    let (mut sink, mut source) = ws.split();
+                    let mut event_rx = event_tx.subscribe();
+                    let my_generation = claim_operator(&operator_generation);
+                    let (response_tx, mut response_rx) = mpsc::unbounded_channel::<String>();
+
+                    let send_task = tokio::spawn(async move {
+                        loop {
+                            tokio::select! {
+                                Ok(msg) = event_rx.recv() => {
+                                    if !is_current_operator(&operator_generation, my_generation) {
+                                        continue;
+                                    }
+                                    if sink.send(Message::Text(msg.into())).await.is_err() {
+                                        break;
+                                    }
+                                }
+                                Some(response) = response_rx.recv() => {
+                                    if sink.send(Message::Text(response.into())).await.is_err() {
+                                        break;
+                                    }
+                                }
+                                else => break,
+                            }
+                        }
+                    });
+
+                    while let Some(Ok(Message::Text(text))) = source.next().await {
+                        if let Ok(command) = serde_json::from_str::<serde_json::Value>(&text) {
+                            let id = command.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                            let cmd = command
+                                .get("command")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            if cmd == "execute_js" {
+                                let _ = response_tx.send(
+                                    serde_json::json!({
+                                        "id": id,
+                                        "success": true,
+                                        "data": "executed"
+                                    })
+                                    .to_string(),
+                                );
+                            }
+                        }
+                    }
+                    send_task.abort();
+                });
+            }
+        });
+
+        (port, event_tx)
+    }
+
+    fn request(url: &str, token: Option<&str>) -> tungstenite::http::Request<()> {
+        let mut request = url.into_client_request().expect("request");
+        if let Some(token) = token {
+            request
+                .headers_mut()
+                .insert(TOKEN_HEADER, token.parse().expect("token header"));
+        }
+        request
+    }
+
+    async fn connect(
+        port: u16,
+        token: Option<&str>,
+    ) -> Result<
+        tokio_tungstenite::WebSocketStream<
+            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+        >,
+        tungstenite::Error,
+    > {
+        let url = format!("ws://127.0.0.1:{port}/");
+        let (ws, _) = connect_async(request(&url, token)).await?;
+        Ok(ws)
+    }
+
+    #[tokio::test]
+    async fn handshake_rejects_missing_token() {
+        let (port, _tx) = start_control_plane().await;
+        let error = connect(port, None).await.expect_err("unauth must fail");
+        match error {
+            tungstenite::Error::Http(response) => {
+                assert_eq!(
+                    response.status(),
+                    tungstenite::http::StatusCode::UNAUTHORIZED
+                );
+            }
+            other => panic!("expected HTTP 401, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn handshake_rejects_wrong_token() {
+        let (port, _tx) = start_control_plane().await;
+        let error = connect(port, Some("wrong-token"))
+            .await
+            .expect_err("wrong token must fail");
+        match error {
+            tungstenite::Error::Http(response) => {
+                assert_eq!(
+                    response.status(),
+                    tungstenite::http::StatusCode::UNAUTHORIZED
+                );
+            }
+            other => panic!("expected HTTP 401, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn handshake_accepts_matching_token() {
+        let (port, _tx) = start_control_plane().await;
+        connect(port, Some(TOKEN)).await.expect("matching token");
+    }
+
+    #[tokio::test]
+    async fn unauthenticated_execute_js_never_dispatches() {
+        // Parent accepted any upgrade via accept_async and then dispatched execute_js.
+        let (port, _tx) = start_control_plane().await;
+        assert!(
+            connect(port, None).await.is_err(),
+            "missing token must not reach execute_js dispatch"
+        );
+    }
+
+    #[tokio::test]
+    async fn query_string_token_does_not_authenticate() {
+        let (port, _tx) = start_control_plane().await;
+        let url = format!("ws://127.0.0.1:{port}/?{TOKEN_HEADER}={TOKEN}");
+        let result = connect_async(request(&url, None)).await;
+        assert!(
+            result.is_err(),
+            "token must not be accepted from the query string"
+        );
+    }
+
+    #[tokio::test]
+    async fn unauthenticated_socket_never_joins_broadcast() {
+        let (port, event_tx) = start_control_plane().await;
+
+        let unauth = connect(port, None).await;
+        assert!(unauth.is_err());
+
+        let (mut authed, _) =
+            connect_async(request(&format!("ws://127.0.0.1:{port}/"), Some(TOKEN)))
+                .await
+                .expect("authed");
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let _ = event_tx.send("picker-secret".to_string());
+
+        let received = tokio::time::timeout(Duration::from_secs(2), authed.next())
+            .await
+            .expect("authed should receive")
+            .expect("socket open")
+            .expect("text");
+        assert_eq!(received.to_string(), "picker-secret");
+    }
+
+    #[tokio::test]
+    async fn picker_events_are_exclusive_to_latest_authed_operator() {
+        let (port, event_tx) = start_control_plane().await;
+        let url = format!("ws://127.0.0.1:{port}/");
+
+        let (mut first, _) = connect_async(request(&url, Some(TOKEN)))
+            .await
+            .expect("first");
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        let (mut second, _) = connect_async(request(&url, Some(TOKEN)))
+            .await
+            .expect("second");
+        tokio::time::sleep(Duration::from_millis(30)).await;
+
+        let _ = event_tx.send("only-latest".to_string());
+
+        let received = tokio::time::timeout(Duration::from_secs(2), second.next())
+            .await
+            .expect("latest operator should receive")
+            .expect("socket")
+            .expect("text");
+        assert_eq!(received.to_string(), "only-latest");
+
+        let stale = tokio::time::timeout(Duration::from_millis(200), first.next()).await;
+        assert!(
+            stale.is_err(),
+            "previous authed connection must not receive picker events"
+        );
+    }
+
+    #[test]
+    fn register_script_url_rejects_dangerous_schemes() {
+        for url in [
+            "javascript:alert(1)",
+            "data:text/javascript,alert(1)",
+            "file:///tmp/x.js",
+            "http://example.com/x.js",
+        ] {
+            assert!(
+                validate_https_script_url(url).is_err(),
+                "{url} must be rejected"
+            );
+        }
+        assert!(validate_https_script_url("https://example.com/x.js").is_ok());
     }
 }

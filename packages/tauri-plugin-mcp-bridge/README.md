@@ -55,18 +55,35 @@ fn main() {
 
 ### Custom Configuration
 
-By default, the plugin binds to `0.0.0.0` (all interfaces) to support remote device development. For localhost-only access:
+By default the plugin binds to **`127.0.0.1`** (loopback) and requires the MCP client to send `X-MCP-Bridge-Token` on WebSocket upgrade. That token is the operator-plane credential: Tauri webview capability ACL is **not** applied to this socket (denying `allow-execute-js` on a window does not block MCP).
+
+Token resolution:
+
+1. `Builder::token(...)` if set
+2. `MCP_BRIDGE_TOKEN` if set
+3. Otherwise a 128-bit hex token is generated, logged once, and written to `{temp}/hypothesi-mcp-bridge.token` (for example `C:\Users\<you>\AppData\Local\Temp\hypothesi-mcp-bridge.token` on Windows, `$TMPDIR/hypothesi-mcp-bridge.token` on Unix)
+
+Point the MCP server at the same value: `MCP_BRIDGE_TOKEN=<token>`.
+
+Non-loopback bind (`0.0.0.0`) is opt-in and **refused** unless you also set `allow_insecure_cleartext` (cleartext `ws://` on a LAN is otherwise silent exposure):
 
 ```rust
 use tauri_plugin_mcp_bridge::Builder;
 
 fn main() {
     tauri::Builder::default()
-        .plugin(Builder::new().bind_address("127.0.0.1").build())
+        .plugin(
+            Builder::new()
+                .bind_address("0.0.0.0")
+                .allow_insecure_cleartext(true)
+                .build(),
+        )
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
 ```
+
+Equivalent environment variables (used when the builder does not set the value explicitly): `MCP_BRIDGE_BIND`, `MCP_BRIDGE_TOKEN`, `MCP_BRIDGE_ALLOW_INSECURE_CLEARTEXT=1`.
 
 ## Features
 
@@ -172,11 +189,17 @@ The plugin runs a WebSocket server on port 9223 (or next available in range 9223
 
 ### Remote Device Development
 
-By default, the WebSocket server binds to `0.0.0.0` (all network interfaces), enabling connections from:
+Loopback is the default. To accept connections from a phone or another machine you must:
+
+1. Bind off loopback: `Builder::bind_address("0.0.0.0")` or `MCP_BRIDGE_BIND=0.0.0.0`
+2. Explicitly allow cleartext: `Builder::allow_insecure_cleartext(true)` or `MCP_BRIDGE_ALLOW_INSECURE_CLEARTEXT=1`
+3. Share `MCP_BRIDGE_TOKEN` with the MCP client (`X-MCP-Bridge-Token` on upgrade — never a query string)
+
+That enables connections from:
 
 - **iOS devices** on the same network
 - **Android devices** on the same network or via `adb reverse`
-- **Emulators/Simulators** via localhost
+- **Emulators/Simulators** via localhost (loopback bind is enough; no LAN opt-in)
 
 #### Connecting from MCP Server
 
@@ -187,7 +210,7 @@ The MCP server supports connecting to remote Tauri apps via the `driver_session`
 driver_session({ action: 'start', host: '192.168.1.100' })
 
 // Or use environment variables:
-// MCP_BRIDGE_HOST=192.168.1.100 npx mcp-server-tauri
+// MCP_BRIDGE_HOST=192.168.1.100 MCP_BRIDGE_TOKEN=... npx mcp-server-tauri
 // TAURI_DEV_HOST=192.168.1.100 npx mcp-server-tauri (same as Tauri CLI uses)
 ```
 
@@ -250,7 +273,7 @@ Add the plugin's default permission to your Tauri capabilities file (`src-tauri/
 }
 ```
 
-This grants all permissions required by the MCP server. The plugin is designed to work as a complete unit—partial permissions are not recommended as the MCP server expects all commands to be available.
+This grants all permissions required by the MCP server for **webview IPC** (`invoke`). The MCP operator plane is the token-gated WebSocket, not these capabilities: omitting `allow-execute-js` from a window does not stop `execute_js` over an authenticated plugin socket. The plugin is designed to work as a complete unit—partial permissions are not recommended as the MCP server expects all commands to be available.
 
 ## API Documentation
 
