@@ -19,6 +19,11 @@ function connect(headers?: Record<string, string>): Promise<WebSocket> {
 
       function fail(error: Error): void {
          ws.removeAllListeners();
+         // Keep an error listener so terminate()/abortHandshake does not
+         // surface as an uncaught exception after a 401 handshake reject.
+         ws.on('error', () => {
+            // Handshake already failed.
+         });
          try {
             ws.terminate();
          } catch{
