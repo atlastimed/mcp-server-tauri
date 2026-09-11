@@ -16,6 +16,7 @@ use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, Manager, Runtime, WebviewWindow};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{broadcast, mpsc};
 use tokio_tungstenite::tungstenite::Message;
@@ -122,7 +123,7 @@ impl<R: Runtime> WebSocketServer<R> {
     /// #[tokio::main]
     /// async fn main() {
     ///     // Requires a Tauri AppHandle
-    ///     let (server, _rx) = WebSocketServer::new(9223, "127.0.0.1", app_handle, token);
+    ///     let server = WebSocketServer::new(9223, "127.0.0.1", app_handle, event_tx, token);
     ///
     ///     tokio::spawn(async move {
     ///         if let Err(e) = server.start().await {
@@ -170,7 +171,7 @@ impl<R: Runtime> WebSocketServer<R> {
     /// use tauri_plugin_mcp_bridge::websocket::WebSocketServer;
     ///
     /// // Requires a Tauri AppHandle
-    /// let (server, _rx) = WebSocketServer::new(9223, "0.0.0.0", app_handle);
+    /// let server = WebSocketServer::new(9223, "127.0.0.1", app_handle, event_tx, token);
     /// server.broadcast("Hello, clients!");
     /// ```
     pub fn broadcast(&self, message: &str) {
@@ -699,6 +700,70 @@ fn is_current_operator(operator_generation: &AtomicU64, generation: u64) -> bool
     operator_generation.load(Ordering::SeqCst) == generation
 }
 
+/// Post-auth session: subscribe, exclusive picker events, request/response.
+///
+/// Shared by production `handle_connection` and handshake tests so subscribe-after-auth
+/// cannot drift from the replica.
+async fn serve_authenticated_socket<S, F, Fut>(
+    ws_stream: WebSocketStream<S>,
+    event_tx: broadcast::Sender<String>,
+    operator_generation: Arc<AtomicU64>,
+    mut on_text: F,
+) where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    F: FnMut(String) -> Fut,
+    Fut: std::future::Future<Output = Option<String>>,
+{
+    let (mut ws_sender, mut ws_receiver) = ws_stream.split();
+    let mut event_rx = event_tx.subscribe();
+    let my_generation = claim_operator(&operator_generation);
+    let (response_tx, mut response_rx) = mpsc::unbounded_channel::<String>();
+
+    let send_task = tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                Ok(msg) = event_rx.recv() => {
+                    if !is_current_operator(&operator_generation, my_generation) {
+                        continue;
+                    }
+                    if let Err(e) = ws_sender.send(Message::Text(msg.into())).await {
+                        eprintln!("Failed to send broadcast: {e}");
+                        break;
+                    }
+                }
+                Some(response) = response_rx.recv() => {
+                    if let Err(e) = ws_sender.send(Message::Text(response.into())).await {
+                        eprintln!("Failed to send response: {e}");
+                        break;
+                    }
+                }
+                else => break,
+            }
+        }
+    });
+
+    while let Some(msg) = ws_receiver.next().await {
+        match msg {
+            Ok(Message::Text(text)) => {
+                if let Some(response) = on_text(text.to_string()).await {
+                    let _ = response_tx.send(response);
+                }
+            }
+            Ok(Message::Close(_)) => {
+                println!("Client disconnected");
+                break;
+            }
+            Err(e) => {
+                eprintln!("WebSocket error: {e}");
+                break;
+            }
+            _ => {}
+        }
+    }
+
+    send_task.abort();
+}
+
 /// Handles a single WebSocket client connection.
 ///
 /// This function manages the lifecycle of a WebSocket connection, including:
@@ -730,59 +795,20 @@ async fn handle_connection<R: Runtime>(
         Err(e) if is_benign_handshake_error(&e) => return Ok(()),
         Err(e) => return Err(e.into()),
     };
-    let (mut ws_sender, mut ws_receiver) = ws_stream.split();
-    // Subscribe only after auth. Picker events go to the latest authed operator.
-    let mut event_rx = event_tx.subscribe();
-    let my_generation = claim_operator(&operator_generation);
 
-    let (response_tx, mut response_rx) = mpsc::unbounded_channel::<String>();
-
-    let send_task = tokio::spawn(async move {
-        loop {
-            tokio::select! {
-                Ok(msg) = event_rx.recv() => {
-                    if !is_current_operator(&operator_generation, my_generation) {
-                        continue;
-                    }
-                    if let Err(e) = ws_sender.send(Message::Text(msg.into())).await {
-                        eprintln!("Failed to send broadcast: {e}");
-                        break;
-                    }
-                }
-                Some(response) = response_rx.recv() => {
-                    if let Err(e) = ws_sender.send(Message::Text(response.into())).await {
-                        eprintln!("Failed to send response: {e}");
-                        break;
-                    }
-                }
-                else => break,
-            }
-        }
-    });
-
-    while let Some(msg) = ws_receiver.next().await {
-        match msg {
-            Ok(Message::Text(text)) => {
-                if let Ok(command) = serde_json::from_str::<Value>(&text) {
-                    let response = dispatch_command(&app, &command).await;
-                    let _ = response_tx.send(response.to_string());
-                } else {
+    serve_authenticated_socket(ws_stream, event_tx, operator_generation, |text| {
+        let app = app.clone();
+        async move {
+            match serde_json::from_str::<Value>(&text) {
+                Ok(command) => Some(dispatch_command(&app, &command).await.to_string()),
+                Err(_) => {
                     eprintln!("Failed to parse command: {text}");
+                    None
                 }
             }
-            Ok(Message::Close(_)) => {
-                println!("Client disconnected");
-                break;
-            }
-            Err(e) => {
-                eprintln!("WebSocket error: {e}");
-                break;
-            }
-            _ => {}
         }
-    }
-
-    send_task.abort();
+    })
+    .await;
     Ok(())
 }
 
@@ -1107,18 +1133,15 @@ mod tests {
 
 #[cfg(test)]
 mod control_plane_tests {
-    use super::{
-        accept_authenticated, claim_operator, is_current_operator, validate_https_script_url,
-    };
+    use super::{accept_authenticated, serve_authenticated_socket, validate_https_script_url};
     use crate::auth::TOKEN_HEADER;
-    use futures_util::{SinkExt, StreamExt};
+    use futures_util::StreamExt;
     use std::sync::atomic::AtomicU64;
     use std::sync::Arc;
     use std::time::Duration;
     use tokio::net::TcpListener;
-    use tokio::sync::{broadcast, mpsc};
+    use tokio::sync::broadcast;
     use tokio_tungstenite::tungstenite::client::IntoClientRequest;
-    use tokio_tungstenite::tungstenite::Message;
     use tokio_tungstenite::{connect_async, tungstenite};
 
     const TOKEN: &str = "secret-token";
@@ -1141,52 +1164,35 @@ mod control_plane_tests {
                     let Ok(ws) = accept_authenticated(stream, TOKEN).await else {
                         return;
                     };
-                    let (mut sink, mut source) = ws.split();
-                    let mut event_rx = event_tx.subscribe();
-                    let my_generation = claim_operator(&operator_generation);
-                    let (response_tx, mut response_rx) = mpsc::unbounded_channel::<String>();
-
-                    let send_task = tokio::spawn(async move {
-                        loop {
-                            tokio::select! {
-                                Ok(msg) = event_rx.recv() => {
-                                    if !is_current_operator(&operator_generation, my_generation) {
-                                        continue;
-                                    }
-                                    if sink.send(Message::Text(msg.into())).await.is_err() {
-                                        break;
-                                    }
-                                }
-                                Some(response) = response_rx.recv() => {
-                                    if sink.send(Message::Text(response.into())).await.is_err() {
-                                        break;
-                                    }
-                                }
-                                else => break,
-                            }
-                        }
-                    });
-
-                    while let Some(Ok(Message::Text(text))) = source.next().await {
-                        if let Ok(command) = serde_json::from_str::<serde_json::Value>(&text) {
+                    serve_authenticated_socket(
+                        ws,
+                        event_tx,
+                        operator_generation,
+                        |text| async move {
+                            let Ok(command) = serde_json::from_str::<serde_json::Value>(&text)
+                            else {
+                                return None;
+                            };
                             let id = command.get("id").and_then(|v| v.as_str()).unwrap_or("");
                             let cmd = command
                                 .get("command")
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("");
                             if cmd == "execute_js" {
-                                let _ = response_tx.send(
+                                Some(
                                     serde_json::json!({
                                         "id": id,
                                         "success": true,
                                         "data": "executed"
                                     })
                                     .to_string(),
-                                );
+                                )
+                            } else {
+                                None
                             }
-                        }
-                    }
-                    send_task.abort();
+                        },
+                    )
+                    .await;
                 });
             }
         });

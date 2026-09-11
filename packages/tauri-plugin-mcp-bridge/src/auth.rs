@@ -56,20 +56,38 @@ pub fn tokens_match(provided: &str, expected: &str) -> bool {
         == 0
 }
 
-/// Writes the token for the local MCP to read. Best-effort 0600 on Unix.
+/// Writes the token for the local MCP to read. Unix creates the file mode 0600.
 pub fn persist_token(token: &str) -> std::io::Result<PathBuf> {
     persist_token_to(&token_file_path(), token)?;
     Ok(token_file_path())
 }
 
 pub fn persist_token_to(path: &std::path::Path, token: &str) -> std::io::Result<()> {
-    std::fs::write(path, token)?;
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+        use std::io::Write;
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+        // Drop any leftover inode so a previous 0644 file never receives the secret.
+        match std::fs::remove_file(path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(path)?;
+        file.write_all(token.as_bytes())?;
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+        Ok(())
     }
-    Ok(())
+    #[cfg(not(unix))]
+    {
+        std::fs::write(path, token)
+    }
 }
 
 /// Loopback bind targets: 127.0.0.0/8, ::1, and the name "localhost".
@@ -236,6 +254,16 @@ mod tests {
         ));
         persist_token_to(&path, "abc123").expect("write");
         let body = std::fs::read_to_string(&path).expect("read");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path)
+                .expect("metadata")
+                .permissions()
+                .mode()
+                & 0o777;
+            assert_eq!(mode, 0o600);
+        }
         let _ = std::fs::remove_file(&path);
         assert_eq!(body, "abc123");
     }
