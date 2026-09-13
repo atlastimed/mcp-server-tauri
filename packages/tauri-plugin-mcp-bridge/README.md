@@ -63,7 +63,7 @@ Token resolution:
 2. `MCP_BRIDGE_TOKEN` if set
 3. Otherwise a 128-bit hex token is generated, logged once, and written to `{temp}/hypothesi-mcp-bridge.token` (for example `C:\Users\<you>\AppData\Local\Temp\hypothesi-mcp-bridge.token` on Windows, `$TMPDIR/hypothesi-mcp-bridge.token` on Unix)
 
-Point the MCP server at the same value: `MCP_BRIDGE_TOKEN=<token>`.
+The MCP server resolves the same value from `MCP_BRIDGE_TOKEN`, or, for loopback targets only, from that token file (path override: `MCP_BRIDGE_TOKEN_FILE`). A local dev setup therefore needs no token configuration at all; set `MCP_BRIDGE_TOKEN` on both sides when you pin the token or connect to a non-loopback host.
 
 Non-loopback bind (`0.0.0.0`) is opt-in and **refused** unless you also set `allow_insecure_cleartext` (cleartext `ws://` on a LAN is otherwise silent exposure):
 

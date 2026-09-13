@@ -114,7 +114,7 @@ export class PluginClient extends EventEmitter {
 
          let settled = false;
 
-         const headers = getWebSocketClientHeaders();
+         const headers = getWebSocketClientHeaders(this._host);
 
          function finish(error?: Error): void {
             if (settled) {

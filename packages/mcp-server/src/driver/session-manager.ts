@@ -440,7 +440,7 @@ async function handleStartAction(host?: string, port?: number): Promise<string> 
 
    // Auto-discovery is loopback-only and requires a token handshake so the
    // first WebSocket in 9223-9322 cannot steal the session (SEC-007/011).
-   if (!connectedSession && isLoopbackHost(configuredHost) && getBridgeToken()) {
+   if (!connectedSession && isLoopbackHost(configuredHost) && getBridgeToken(configuredHost)) {
       const discovery = getAppDiscovery(configuredHost),
             firstApp = await discovery.getFirstAvailableApp();
 

@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- MCP server: when `MCP_BRIDGE_TOKEN` is unset and the target host is loopback, read the handshake token from the file the plugin writes (`{temp}/hypothesi-mcp-bridge.token`, override with `MCP_BRIDGE_TOKEN_FILE`). Local development no longer needs a shared environment variable; non-loopback hosts still require an explicit token.
+
 ## [0.14.0] - 2026-09-11
 
 ### Security

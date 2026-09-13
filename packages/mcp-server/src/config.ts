@@ -5,6 +5,10 @@
  * with support for environment variables and sensible defaults.
  */
 
+import { readFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
 export interface BridgeConfig {
    host: string;
    port: number;
@@ -83,12 +87,65 @@ export function getConfig(): BridgeConfig {
 }
 
 /**
- * Shared secret for plugin WebSocket upgrade, if the operator configured one.
+ * File name the plugin writes its handshake token to, under the process temp dir.
  *
- * Empty or unset means the client will not send `X-MCP-Bridge-Token`. Auto-discovery
- * must not treat an unauthenticated peer as the session target in that case.
+ * Must stay in lockstep with `TOKEN_FILE_NAME` in the Rust plugin (`auth.rs`).
  */
-export function getBridgeToken(): string | null {
+export const MCP_BRIDGE_TOKEN_FILE_NAME = 'hypothesi-mcp-bridge.token';
+
+/**
+ * Path of the plugin-written token file.
+ *
+ * Resolution priority:
+ * 1. MCP_BRIDGE_TOKEN_FILE environment variable (explicit override; useful when
+ *    the app and the MCP client resolve different temp directories)
+ * 2. `os.tmpdir()/hypothesi-mcp-bridge.token` (where the plugin writes it)
+ */
+export function getBridgeTokenFilePath(): string {
+   // eslint-disable-next-line no-process-env
+   const override = process.env.MCP_BRIDGE_TOKEN_FILE;
+
+   if (override && override.length > 0) {
+      return override;
+   }
+
+   return path.join(os.tmpdir(), MCP_BRIDGE_TOKEN_FILE_NAME);
+}
+
+/**
+ * Reads the plugin-written token file. Missing, unreadable, or blank means no token.
+ */
+function readBridgeTokenFile(): string | null {
+   let contents: string;
+
+   try {
+      contents = readFileSync(getBridgeTokenFilePath(), 'utf-8');
+   } catch{
+      return null;
+   }
+
+   const token = contents.trim();
+
+   return token.length > 0 ? token : null;
+}
+
+/**
+ * Shared secret for plugin WebSocket upgrade.
+ *
+ * Resolution priority:
+ * 1. MCP_BRIDGE_TOKEN environment variable (an operator-pinned token)
+ * 2. The token file the plugin writes to the process temp dir, but only when the
+ *    target host is loopback. The file is same-user local state (0600 on Unix,
+ *    per-user temp dir on Windows), which is the same trust boundary as the plugin
+ *    that wrote it; it must never authenticate the client to a remote host.
+ *
+ * `null` means the client will not send `X-MCP-Bridge-Token`. Auto-discovery
+ * must not treat an unauthenticated peer as the session target in that case.
+ *
+ * @param host - Host the token will be presented to; defaults to the configured
+ *    bridge host.
+ */
+export function getBridgeToken(host: string = getDefaultHost()): string | null {
    // eslint-disable-next-line no-process-env
    const token = process.env.MCP_BRIDGE_TOKEN;
 
@@ -96,16 +153,22 @@ export function getBridgeToken(): string | null {
       return token;
    }
 
-   return null;
+   if (!isLoopbackHost(host)) {
+      return null;
+   }
+
+   return readBridgeTokenFile();
 }
 
 /**
  * Headers to attach to the plugin WebSocket upgrade.
  *
+ * @param host - Host the upgrade targets; controls whether the loopback token file
+ *    may be used.
  * @returns `undefined` when no token is configured so the client omits the header.
  */
-export function getWebSocketClientHeaders(): Record<string, string> | undefined {
-   const token = getBridgeToken();
+export function getWebSocketClientHeaders(host: string = getDefaultHost()): Record<string, string> | undefined {
+   const token = getBridgeToken(host);
 
    if (!token) {
       return undefined;

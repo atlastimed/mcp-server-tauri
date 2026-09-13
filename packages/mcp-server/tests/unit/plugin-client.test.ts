@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 
 import { PluginClient, resetPluginClient } from '../../src/driver/plugin-client';
@@ -190,6 +194,29 @@ describe('PluginClient token handshake', () => {
 
       expect(client.isConnected()).toBe(true);
       expect(stub.tokens).toEqual([ 'secret-token' ]);
+   });
+
+   it('connects with the plugin-written token file when MCP_BRIDGE_TOKEN is unset (loopback only)', async () => {
+      const tokenDir = mkdtempSync(join(tmpdir(), 'mcp-bridge-client-token-'));
+
+      process.env.MCP_BRIDGE_TOKEN_FILE = join(tokenDir, 'hypothesi-mcp-bridge.token');
+      writeFileSync(process.env.MCP_BRIDGE_TOKEN_FILE, 'file-token\n');
+
+      try {
+         const stub = await createStubBridge({ requiredToken: 'file-token' });
+
+         stubs.push(stub);
+
+         const client = new PluginClient('127.0.0.1', stub.port);
+
+         clients.push(client);
+         await client.connect();
+
+         expect(client.isConnected()).toBe(true);
+         expect(stub.tokens).toEqual([ 'file-token' ]);
+      } finally {
+         rmSync(tokenDir, { recursive: true, force: true });
+      }
    });
 
    it('rejects a stub that requires a different token', async () => {

@@ -208,7 +208,7 @@ export class AppDiscovery {
     * rather than attaching to the first listener in 9223-9322 (SEC-007).
     */
    private async _isPortInUse(port: number): Promise<boolean> {
-      if (!getBridgeToken()) {
+      if (!getBridgeToken(this._host)) {
          return false;
       }
 

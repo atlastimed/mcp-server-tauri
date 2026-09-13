@@ -248,7 +248,7 @@ Add to `src-tauri/capabilities/default.json`:
 
 `mcp-bridge:default` is inspect-only and is not enough for screenshots, `execute_js`, script injection, or IPC monitoring.
 
-Share `MCP_BRIDGE_TOKEN` with the MCP client (`X-MCP-Bridge-Token`). The plugin binds `127.0.0.1` by default. In release binaries `init()` still registers commands but does not bind the operator WebSocket unless you pass `Builder::allow_release(true)`.
+The MCP client sends the token as `X-MCP-Bridge-Token`. On loopback it reads the token file the plugin writes (`{temp}/hypothesi-mcp-bridge.token`) automatically; set `MCP_BRIDGE_TOKEN` on both sides to pin it or when the plugin is bound off loopback. The plugin binds `127.0.0.1` by default. In release binaries `init()` still registers commands but does not bind the operator WebSocket unless you pass `Builder::allow_release(true)`.
 
 </details>
 
@@ -313,7 +313,7 @@ If the AI can't connect to your Tauri app:
 1. Make sure your app is running (`cargo tauri dev`)
 2. Verify `withGlobalTauri` is enabled in `tauri.conf.json`
 3. Check that `mcp-bridge:automation` permission is added (`mcp-bridge:default` is inspect-only)
-4. Set `MCP_BRIDGE_TOKEN` to the token the plugin logs (or writes to `{temp}/hypothesi-mcp-bridge.token`)
+4. Check the token: on loopback the MCP server reads `{temp}/hypothesi-mcp-bridge.token` automatically (override with `MCP_BRIDGE_TOKEN_FILE`); otherwise set `MCP_BRIDGE_TOKEN` to the token the plugin logs
 5. The plugin binds `127.0.0.1` by default. LAN device testing needs `Builder::allow_insecure_cleartext(true)` (or `MCP_BRIDGE_ALLOW_INSECURE_CLEARTEXT=1`)
 6. Look for WebSocket errors in your app's console (port 9223)
 7. Release binaries do not bind the operator WebSocket unless you pass `Builder::allow_release(true)` — `init()` still registers commands in that case
