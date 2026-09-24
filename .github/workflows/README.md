@@ -21,6 +21,8 @@ This directory contains GitHub Actions workflows for CI/CD automation.
   - Matrix: Ubuntu 22.04, Windows, macOS
   - Verifies the test app builds successfully
 - **lint-and-standards**: ESLint checks
+- **validate-cli-skills**: Validates the CLI agent skills and checks for stale skill files
+- **dependency-audit**: Audits the root and test-app npm lockfiles for vulnerabilities
 - **all-tests-pass**: Summary job that requires all tests to pass
 
 ### 2. Release Packages (`release.yml`)

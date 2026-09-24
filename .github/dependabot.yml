@@ -1,22 +1,40 @@
 version: 2
 updates:
   - package-ecosystem: npm
-    directory: /
+    directories:
+      - /
+      - /packages/test-app
     schedule:
       interval: weekly
-    open-pull-requests-limit: 10
-  - package-ecosystem: npm
-    directory: /packages/test-app
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 3
+    groups:
+      security:
+        applies-to: security-updates
+        patterns:
+          - "*"
+      minor-and-patch:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
   - package-ecosystem: cargo
-    directory: /packages/tauri-plugin-mcp-bridge
+    directories:
+      - /packages/tauri-plugin-mcp-bridge
+      - /packages/test-app/src-tauri
     schedule:
       interval: weekly
-    open-pull-requests-limit: 5
-  - package-ecosystem: cargo
-    directory: /packages/test-app/src-tauri
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 3
+    groups:
+      security:
+        applies-to: security-updates
+        patterns:
+          - "*"
+      minor-and-patch:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch

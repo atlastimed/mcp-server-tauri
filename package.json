@@ -42,7 +42,7 @@
       "prepare": "husky"
    },
    "devDependencies": {
-      "@commitlint/cli": "21.2.3",
+      "@commitlint/cli": "20.5.3",
       "@silvermine/eslint-config": "github:silvermine/eslint-config-silvermine#3d0c92ca8d18c4bb66d7b01cf226b1963cbd1319",
       "@silvermine/eslint-plugin-silvermine": "2.5.0",
       "@types/fs-extra": "11.0.4",
