@@ -1,0 +1,22 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+  - package-ecosystem: npm
+    directory: /packages/test-app
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+  - package-ecosystem: cargo
+    directory: /packages/tauri-plugin-mcp-bridge
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+  - package-ecosystem: cargo
+    directory: /packages/test-app/src-tauri
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5

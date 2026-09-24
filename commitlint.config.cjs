@@ -2,26 +2,32 @@
 
 /* eslint-env node */
 /* eslint-disable no-undef */
-const baseConfig = require('@silvermine/standardization/commitlint');
 
-// Extend scope-enum to include package names
-const baseScopes = baseConfig.rules['scope-enum'][2];
+const types = [
+   'build', 'chore', 'ci', 'config', 'docs', 'feat', 'fix', 'perf',
+   'refactor', 'revert', 'style', 'test',
+];
 
 module.exports = {
-   ...baseConfig,
    rules: {
-      ...baseConfig.rules,
+      'body-leading-blank': [ 2, 'always' ],
+      'body-max-line-length': [ 2, 'always', 90 ],
+      'footer-leading-blank': [ 2, 'always' ],
+      'footer-max-line-length': [ 2, 'always', 90 ],
+      'header-max-length': [ 2, 'always', 100 ],
+      'scope-case': [ 2, 'always', [ 'lower-case', 'kebab-case' ] ],
       'scope-enum': [
          2,
          'always',
-         baseScopes.concat([
-            'mcp',
-            'bridge',
-            'tauri-mcp-server',
-            'tauri-plugin-mcp-bridge',
-            'cli',
-         ]),
+         types.concat([ 'mcp', 'bridge', 'tauri-mcp-server', 'tauri-plugin-mcp-bridge', 'cli' ]),
       ],
-      'header-max-length': [ 2, 'always', 100 ],
+      'subject-case': [ 2, 'never', [ 'upper-case' ] ],
+      'subject-empty': [ 2, 'never' ],
+      'subject-full-stop': [ 2, 'never', '.' ],
+      'type-case': [ 2, 'always', 'lower-case' ],
+      'type-empty': [ 2, 'never' ],
+      'type-enum': [ 2, 'always', types.concat([ 'sub' ]) ],
    },
+   defaultIgnores: false,
+   ignores: [ (commit) => { return [ 'Merge', 'Revert' ].some((prefix) => { return commit.startsWith(prefix); }); } ],
 };
