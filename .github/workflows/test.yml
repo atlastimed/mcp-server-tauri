@@ -203,9 +203,28 @@ jobs:
       - name: Check for stale skills
         run: npm run skills:stale --workspace=@hypothesi/tauri-mcp-cli
 
+  dependency-audit:
+    name: Audit npm lockfiles
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Audit root lockfile
+        run: npm audit --package-lock-only --audit-level=low
+
+      - name: Audit test-app lockfile
+        run: npm audit --prefix packages/test-app --workspaces=false --package-lock-only --audit-level=low
+
   all-tests-pass:
     name: All Tests Pass
-    needs: [test-plugin, test-server, test-app, lint-and-standards, validate-cli-skills]
+    needs: [test-plugin, test-server, test-app, lint-and-standards, validate-cli-skills, dependency-audit]
     runs-on: ubuntu-latest
     steps:
       - name: Success
